@@ -24,8 +24,12 @@ if (( ${#arguments[@]} == 0 )); then
   arguments=(--name "小米蓝牙语音遥控器")
 fi
 
-if [[ -z "${MI_AO_RUN_SCRIPT:-}" ]]; then
-  export MI_AO_LAUNCH_VIA_OPEN=1
+# 运行时直接由 run.sh exec 启动，不再经 `open -n` 走 LaunchServices：
+# 在 macOS 26 上，由已运行的米遥实例再 `open -n` 同一个 App 拉起的进程收不到任何 GATT 通知
+# （订阅、写入都成功，ATVV 能力协商永远超时），直接 exec 的进程则正常。
+# 直接 exec 的进程仍会被 LaunchServices 识别为米遥：再次双击 App 会唤起现有实例的设置窗口。
+# 需要旧行为时显式设置 MI_AO_LAUNCH_VIA_OPEN=1。
+if [[ "${MI_AO_LAUNCH_VIA_OPEN:-0}" == "1" ]]; then
   export MI_AO_RUNTIME_LOG_FILE="$LOG_FILE"
 fi
 
