@@ -30,6 +30,14 @@
 - 必须具备：蓝牙、本地语音引擎、辅助功能、Codex App 和 Codex 输入区兼容。
 - 登录时启动：仍然可选。
 
+### Codex CLI 模式
+
+- 语音发送：Codex CLI；再选 tmux 或某个终端 App。
+- 必须具备：蓝牙、本地语音引擎、辅助功能、已安装并登录的 Codex CLI（`codex login`）。
+- 不需要 Codex App，也不需要 Codex 输入区兼容参数。
+- 选 tmux 时实际投递不依赖辅助功能；选终端 App 时需要它来激活终端并合成 `⌘V` / Return / Tab 切换键。
+- 选 Terminal 或 iTerm2 并使用“启动 / 登录 Codex CLI”时，米遥通过 AppleScript 打开新窗口，macOS 首次会请求“自动化”授权；拒绝后只会聚焦终端并把命令复制到剪贴板。
+
 ### 只转写并复制
 
 - 自动发送到 Codex：关闭。

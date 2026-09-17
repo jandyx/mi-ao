@@ -3,7 +3,20 @@ import Foundation
 
 enum SubmissionMode: String, Codable, CaseIterable {
     case codex
+    case codexCLI = "codex_cli"
     case transcriptionOnly = "transcription_only"
+
+    var displayName: String {
+        switch self {
+        case .codex: return "Codex App"
+        case .codexCLI: return "Codex CLI"
+        case .transcriptionOnly: return "仅转写"
+        }
+    }
+
+    var codexTarget: CodexSubmitTarget {
+        self == .codexCLI ? .codexCLI : .codexApp
+    }
 }
 
 enum VoiceConnectionMode: String, Codable, CaseIterable {
@@ -24,6 +37,8 @@ struct AppPreferences: Codable, Equatable {
     var schemaVersion = currentSchemaVersion
     var hasCompletedSetup = false
     var submissionMode: SubmissionMode = .codex
+    var codexCLITerminal: CodexCLITerminalChoice = .auto
+    var codexCLILaunchCommand = CodexCLISubmitter.defaultLaunchCommand
     var buttonControlEnabled = true
     var voiceConnectionMode: VoiceConnectionMode = .alwaysReady
     var selectedPresetID = "pointer"
@@ -35,6 +50,8 @@ struct AppPreferences: Codable, Equatable {
         case schemaVersion
         case hasCompletedSetup
         case submissionMode
+        case codexCLITerminal
+        case codexCLILaunchCommand
         case buttonControlEnabled
         case voiceConnectionMode
         case selectedPresetID
@@ -45,6 +62,8 @@ struct AppPreferences: Codable, Equatable {
         schemaVersion: Int = currentSchemaVersion,
         hasCompletedSetup: Bool = false,
         submissionMode: SubmissionMode = .codex,
+        codexCLITerminal: CodexCLITerminalChoice = .auto,
+        codexCLILaunchCommand: String = CodexCLISubmitter.defaultLaunchCommand,
         buttonControlEnabled: Bool = true,
         voiceConnectionMode: VoiceConnectionMode = .alwaysReady,
         selectedPresetID: String = "pointer",
@@ -53,6 +72,8 @@ struct AppPreferences: Codable, Equatable {
         self.schemaVersion = schemaVersion
         self.hasCompletedSetup = hasCompletedSetup
         self.submissionMode = submissionMode
+        self.codexCLITerminal = codexCLITerminal
+        self.codexCLILaunchCommand = codexCLILaunchCommand
         self.buttonControlEnabled = buttonControlEnabled
         self.voiceConnectionMode = voiceConnectionMode
         self.selectedPresetID = selectedPresetID
@@ -66,6 +87,13 @@ struct AppPreferences: Codable, Equatable {
             ?? Self.currentSchemaVersion
         hasCompletedSetup = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedSetup) ?? false
         submissionMode = try container.decodeIfPresent(SubmissionMode.self, forKey: .submissionMode) ?? .codex
+        codexCLITerminal =
+            try container.decodeIfPresent(String.self, forKey: .codexCLITerminal)
+            .flatMap(CodexCLITerminalChoice.init(rawValue:)) ?? .auto
+        let launchCommand =
+            try container.decodeIfPresent(String.self, forKey: .codexCLILaunchCommand)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        codexCLILaunchCommand = launchCommand.isEmpty ? CodexCLISubmitter.defaultLaunchCommand : launchCommand
         buttonControlEnabled = try container.decodeIfPresent(Bool.self, forKey: .buttonControlEnabled) ?? true
         voiceConnectionMode =
             try container.decodeIfPresent(VoiceConnectionMode.self, forKey: .voiceConnectionMode)
@@ -82,6 +110,8 @@ struct AppPreferences: Codable, Equatable {
         try container.encode(schemaVersion, forKey: .schemaVersion)
         try container.encode(hasCompletedSetup, forKey: .hasCompletedSetup)
         try container.encode(submissionMode, forKey: .submissionMode)
+        try container.encode(codexCLITerminal.rawValue, forKey: .codexCLITerminal)
+        try container.encode(codexCLILaunchCommand, forKey: .codexCLILaunchCommand)
         try container.encode(buttonControlEnabled, forKey: .buttonControlEnabled)
         try container.encode(voiceConnectionMode, forKey: .voiceConnectionMode)
         try container.encode(selectedPresetID, forKey: .selectedPresetID)
@@ -92,11 +122,17 @@ struct AppPreferences: Codable, Equatable {
     }
 
     var requiresAccessibility: Bool {
-        submissionMode == .codex || buttonControlEnabled
+        submissionMode != .transcriptionOnly || buttonControlEnabled
     }
 
+    /// 是否需要 Codex 桌面 App：自动发送到 App，或仅转写但按键仍要操作 App。
+    /// Codex CLI 模式下按键动作改走终端，不再依赖 App。
     var requiresCodex: Bool {
-        submissionMode == .codex || buttonControlEnabled
+        submissionMode == .codex || (buttonControlEnabled && submissionMode == .transcriptionOnly)
+    }
+
+    var requiresCodexCLI: Bool {
+        submissionMode == .codexCLI
     }
 
     var requiresCodexCompatibility: Bool {
@@ -105,8 +141,19 @@ struct AppPreferences: Codable, Equatable {
 
     var runtimeArguments: [String] {
         var arguments = ["--name", "小米蓝牙语音遥控器"]
-        if submissionMode == .transcriptionOnly {
+        switch submissionMode {
+        case .transcriptionOnly:
             arguments.append("--no-submit")
+        case .codexCLI:
+            arguments.append(contentsOf: ["--submit-target", CodexSubmitTarget.codexCLI.rawValue])
+            if codexCLITerminal != .auto {
+                arguments.append(contentsOf: ["--cli-terminal", codexCLITerminal.rawValue])
+            }
+            if codexCLILaunchCommand != CodexCLISubmitter.defaultLaunchCommand {
+                arguments.append(contentsOf: ["--cli-launch-command", codexCLILaunchCommand])
+            }
+        case .codex:
+            break
         }
         if !buttonControlEnabled {
             arguments.append("--no-buttons")

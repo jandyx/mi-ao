@@ -41,6 +41,22 @@ fi
 
 [[ -f "$INFO_PLIST" ]] && pass "App 元数据可读取：$APP_NAME" || fail "缺少 Resources/Info.plist"
 
+# Codex CLI 只在“Codex CLI”发送模式下需要，这里只报告不阻断。
+if command -v codex >/dev/null 2>&1; then
+  codex_version="$(codex --version 2>/dev/null | awk '{print $NF}')"
+  pass "Codex CLI 已安装${codex_version:+：$codex_version}"
+  if codex_login="$(codex login status 2>&1)"; then
+    pass "Codex CLI 登录状态：${codex_login:-已登录}"
+  else
+    pass "Codex CLI 尚未登录（仅 Codex CLI 模式需要，运行 codex login 即可）"
+  fi
+else
+  pass "Codex CLI 未安装（仅 Codex CLI 模式需要：brew install codex）"
+fi
+command -v tmux >/dev/null 2>&1 \
+  && pass "tmux 已安装（Codex CLI 模式推荐）" \
+  || pass "tmux 未安装（可选；Codex CLI 模式也可直接用终端 App）"
+
 if (( failures > 0 )); then
   echo "预检失败：$failures 项" >&2
   exit 1

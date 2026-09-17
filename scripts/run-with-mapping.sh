@@ -18,6 +18,7 @@ skip_mapping=false
 skip_codex_compatibility=false
 runtime_token="$$-$RANDOM-$(date +%s)"
 
+previous_argument=""
 for argument in "$@"; do
   case "$argument" in
     --help|-h)
@@ -33,6 +34,11 @@ for argument in "$@"; do
       skip_codex_compatibility=true
       ;;
   esac
+  # Codex CLI 目标不经过 Codex App，无需辅助功能兼容参数。
+  if [[ "$previous_argument" == "--submit-target" && "$argument" == "codex-cli" ]]; then
+    skip_codex_compatibility=true
+  fi
+  previous_argument="$argument"
 done
 
 if ! $skip_codex_compatibility; then

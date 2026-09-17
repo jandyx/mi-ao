@@ -48,6 +48,8 @@ flowchart LR
 
 小米 2 Pro 固件 2671 的 `TV` 与电源键已经分别确认成 Keyboard Usage `0x35` 和 Keyboard Power `0x66`，不是纯红外键。音量加减确认成 `0x80` / `0x81`，分别通过 Accessibility 直接执行 Codex 的“Previous Task / Next Task”菜单项，不合成 `⌘⇧[` / `⌘⇧]` 或任何修饰键。Codex 已运行时电源动作只聚焦现有窗口，未运行时通过 bundle ID `com.openai.codex` 查找并启动已安装 App。其他遥控器仍必须独立校准，不能沿用这组 Usage。
 
+发送目标为 Codex CLI 时，这四个 `codex.*` 动作按目标路由而不改动作 ID：`codex.focus` 聚焦承载 codex 的终端（tmux 会先 `select-window` / `select-pane`）；`codex.launch_or_focus` 找不到运行中的 codex 时在向导选定的终端里打开 `codex`；`codex.previous_task` / `codex.next_task` 在 tmux 里执行 `previous-window` / `next-window`，在终端 App 里合成 `⌘⇧[` / `⌘⇧]` 切换 Tab。按键配置页的动作名会随之显示为“Codex CLI · 上一个 Tab”等。
+
 ## 自定义按键配置
 
 从 App 的「设置与诊断 → 按键配置」进入。官方 `默认 · 鼠标指针` 始终只读，保证任何时候都有可回退的基线；点击「新建」从默认创建，或点击「复制」从当前配置创建副本。用户配置允许重命名，并为方向键、确认、返回、HOME、音量、TV 和电源选择内置动作，或通过“录制自定义快捷键”保存标准键盘组合。

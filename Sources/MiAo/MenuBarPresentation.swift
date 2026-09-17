@@ -82,32 +82,48 @@ struct MiAoCommandActivity: Equatable {
         failure(label: "配置不可用 · \(id)", symbol: "square.stack.3d.up")
     }
 
-    static func codexFocus(succeeded: Bool) -> MiAoCommandActivity {
-        succeeded
-            ? success(label: "已聚焦 Codex", symbol: "rectangle.and.hand.point.up.left")
-            : failure(label: "Codex 未运行", symbol: "rectangle.and.hand.point.up.left")
+    static func codexFocus(
+        succeeded: Bool,
+        target: CodexSubmitTarget = .codexApp
+    ) -> MiAoCommandActivity {
+        let name = target.displayName
+        return succeeded
+            ? success(label: "已聚焦 \(name)", symbol: "rectangle.and.hand.point.up.left")
+            : failure(
+                label: target == .codexCLI ? "未找到 Codex CLI" : "Codex 未运行",
+                symbol: "rectangle.and.hand.point.up.left"
+            )
     }
 
-    static func codexActivation(_ result: CodexActivationResult) -> MiAoCommandActivity {
+    static func codexActivation(
+        _ result: CodexActivationResult,
+        target: CodexSubmitTarget = .codexApp
+    ) -> MiAoCommandActivity {
         switch result {
         case .activated:
-            return success(label: "已聚焦 Codex", symbol: "rectangle.and.hand.point.up.left")
+            return success(label: "已聚焦 \(target.displayName)", symbol: "rectangle.and.hand.point.up.left")
         case .launchRequested:
             return command(label: "正在启动 Codex", symbol: "power")
         case .unavailable:
             return failure(label: "未找到 Codex App", symbol: "power")
+        case .cliLaunchRequested(let terminal):
+            return command(label: "正在 \(terminal) 启动 Codex CLI", symbol: "power")
+        case .cliNotFound:
+            return failure(label: "未找到 Codex CLI", symbol: "power")
         }
     }
 
     static func codexTask(
         _ direction: CodexTaskDirection,
-        succeeded: Bool
+        succeeded: Bool,
+        target: CodexSubmitTarget = .codexApp
     ) -> MiAoCommandActivity {
-        let label = direction == .previous ? "Codex · 上一个会话" : "Codex · 下一个会话"
+        let action: ButtonAction = direction == .previous ? .codexPreviousTask : .codexNextTask
         let symbol = direction == .previous ? "chevron.backward.2" : "chevron.forward.2"
+        let failureLabel = target == .codexCLI ? "Codex CLI Tab 切换失败" : "Codex 会话切换失败"
         return succeeded
-            ? success(label: label, symbol: symbol)
-            : failure(label: "Codex 会话切换失败", symbol: symbol)
+            ? success(label: action.displayName(target: target), symbol: symbol)
+            : failure(label: failureLabel, symbol: symbol)
     }
 
     static func homePage(up: Bool) -> MiAoCommandActivity {

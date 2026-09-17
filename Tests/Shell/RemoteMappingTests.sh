@@ -383,6 +383,10 @@ set -e
 FAKE_CODEX_EXIT=8 MI_AO_RUN_SCRIPT="$TEMP_ROOT/runner" \
   "$ROOT/scripts/run-with-mapping.sh" --no-submit --no-buttons >/dev/null
 
+# Codex CLI 目标同样跳过 Codex App 兼容门禁。
+FAKE_CODEX_EXIT=8 MI_AO_RUN_SCRIPT="$TEMP_ROOT/runner" \
+  "$ROOT/scripts/run-with-mapping.sh" --submit-target codex-cli --no-buttons >/dev/null
+
 echo empty > "$FAKE_HID_STATE"
 set +e
 FAKE_CHECK_EXIT=9 MI_AO_RUN_SCRIPT="$TEMP_ROOT/runner" \
@@ -485,15 +489,19 @@ fi
 cat > "$TEMP_ROOT/background-runner" <<'EOF'
 #!/bin/zsh
 trap 'exit 0' TERM INT HUP
+print -r -- "${MI_AO_LAUNCH_VIA_OPEN:-unset}" > "$MI_AO_TEST_OPEN_FLAG"
 echo '桥接已就绪：测试后台实例'
 while true; do sleep 1; done
 EOF
 chmod +x "$TEMP_ROOT/background-runner"
 
+# start.sh 默认直接 exec 运行时，不经 `open -n`（macOS 26 上后者收不到 GATT 通知）。
+export MI_AO_TEST_OPEN_FLAG="$TEMP_ROOT/open-flag"
 MI_AO_RUN_SCRIPT="$TEMP_ROOT/background-runner" \
   "$ROOT/scripts/start.sh" --no-buttons >/dev/null
 background_pid="$(<"$VOICE_BRIDGE_DATA_DIR/runtime.lock/pid")"
 kill -0 "$background_pid"
+[[ "$(cat "$MI_AO_TEST_OPEN_FLAG")" == "unset" ]]
 duplicate_start_output="$(
   MI_AO_RUN_SCRIPT="$TEMP_ROOT/background-runner" \
     "$ROOT/scripts/start.sh" --no-buttons

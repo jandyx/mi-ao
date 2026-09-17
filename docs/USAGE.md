@@ -111,6 +111,17 @@ AUDIO_STOP reason=0x00
 
 适合日常短指令。
 
+### Codex CLI：发送到终端里的 codex
+
+```bash
+./scripts/run.sh \
+  --name "小米蓝牙语音遥控器" \
+  --submit-target codex-cli \
+  --cli-terminal tmux
+```
+
+`--cli-terminal` 可选 `auto`（默认，自动探测）、`tmux` 或 `app:<bundle id>`（例如 `app:com.googlecode.iterm2`）；`--tmux-target %3` 直接指定窗格；`--cli-launch-command cxd` 指定电源键 / "启动 Codex CLI" 在登录 shell 里执行的命令（可用 alias，默认 `codex`）。向导里对应“语音发送 → Codex CLI”和“Codex CLI 所在终端”。tmux 路不需要辅助功能权限；终端 App 路需要，并且会粘贴到该终端当前前台 Tab。此模式下音量 `+/-` 切换终端 Tab / tmux 窗口，电源键在选定终端打开或聚焦 `codex`；向导会检查 `codex` 是否安装、是否已登录，并提供“启动 / 登录 Codex CLI”按钮。
+
 ### 安全检查：只转写，不发送
 
 ```bash

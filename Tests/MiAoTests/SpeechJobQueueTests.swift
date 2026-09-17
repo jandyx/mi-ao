@@ -42,7 +42,7 @@ import Testing
     for status in [
         MiAoRuntimeStatus.processing(1),
         .disconnected,
-        .reconnecting(attempt: 2, delaySeconds: 4),
+        .reconnecting(attempt: 2, delaySeconds: 4, reason: "ATVV 能力协商超时（已尝试 3 次）"),
         .voiceSleeping,
         .error("测试错误"),
     ] {

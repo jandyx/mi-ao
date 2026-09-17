@@ -127,6 +127,104 @@ import Testing
     #expect(reloaded.preferences.voiceConnectionMode == .smartSleep)
 }
 
+@Test func appPreferencesBuildCodexCLIRuntimeArguments() throws {
+    var preferences = AppPreferences.defaults
+    preferences.submissionMode = .codexCLI
+    #expect(
+        preferences.runtimeArguments == [
+            "--name", "小米蓝牙语音遥控器",
+            "--submit-target", "codex-cli",
+            "--voice-connection-mode", "always_ready",
+            "--preset", "pointer",
+        ]
+    )
+
+    preferences.codexCLITerminal = .app("com.googlecode.iterm2")
+    preferences.codexCLILaunchCommand = "cxd"
+    #expect(
+        preferences.runtimeArguments == [
+            "--name", "小米蓝牙语音遥控器",
+            "--submit-target", "codex-cli",
+            "--cli-terminal", "app:com.googlecode.iterm2",
+            "--cli-launch-command", "cxd",
+            "--voice-connection-mode", "always_ready",
+            "--preset", "pointer",
+        ]
+    )
+
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mi-ao-preferences-cli-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let fileURL = root.appendingPathComponent("preferences.json")
+    let store = AppPreferencesStore(fileURL: fileURL)
+    try store.save(preferences)
+    #expect(store.load() == AppPreferencesSnapshot(preferences: preferences, state: .loaded))
+    let json = try #require(
+        JSONSerialization.jsonObject(with: Data(contentsOf: fileURL)) as? [String: Any]
+    )
+    #expect(json["submissionMode"] as? String == "codex_cli")
+    #expect(json["codexCLITerminal"] as? String == "app:com.googlecode.iterm2")
+    #expect(json["codexCLILaunchCommand"] as? String == "cxd")
+}
+
+@Test func appPreferencesReadCodexCLIModeWithoutTerminalField() throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("mi-ao-preferences-cli-legacy-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let fileURL = root.appendingPathComponent("preferences.json")
+    try Data(
+        """
+        {"schemaVersion":3,"hasCompletedSetup":true,"submissionMode":"codex_cli","buttonControlEnabled":true,"selectedPresetID":"pointer","voiceConnectionMode":"always_ready"}
+        """.utf8
+    ).write(to: fileURL)
+
+    let snapshot = AppPreferencesStore(fileURL: fileURL).load()
+    #expect(snapshot.state == .loaded)
+    #expect(snapshot.preferences.submissionMode == .codexCLI)
+    #expect(snapshot.preferences.codexCLITerminal == .auto)
+    #expect(snapshot.preferences.codexCLILaunchCommand == "codex")
+
+    try Data(
+        """
+        {"schemaVersion":3,"submissionMode":"codex","codexCLITerminal":"not-a-choice","codexCLILaunchCommand":"  "}
+        """.utf8
+    ).write(to: fileURL)
+    let fallback = AppPreferencesStore(fileURL: fileURL).load().preferences
+    #expect(fallback.codexCLITerminal == .auto)
+    #expect(fallback.codexCLILaunchCommand == "codex")
+}
+
+@Test func appPreferencesRequirementsFollowSubmissionMode() {
+    var preferences = AppPreferences.defaults
+
+    preferences.submissionMode = .codex
+    preferences.buttonControlEnabled = false
+    #expect(preferences.requiresCodex)
+    #expect(!preferences.requiresCodexCLI)
+    #expect(preferences.requiresCodexCompatibility)
+    #expect(preferences.requiresAccessibility)
+
+    preferences.submissionMode = .codexCLI
+    preferences.buttonControlEnabled = true
+    #expect(!preferences.requiresCodex)
+    #expect(preferences.requiresCodexCLI)
+    #expect(!preferences.requiresCodexCompatibility)
+    #expect(preferences.requiresAccessibility)
+    #expect(preferences.submissionMode.codexTarget == .codexCLI)
+
+    preferences.submissionMode = .transcriptionOnly
+    preferences.buttonControlEnabled = true
+    #expect(preferences.requiresCodex)
+    #expect(!preferences.requiresCodexCLI)
+    #expect(preferences.requiresAccessibility)
+
+    preferences.buttonControlEnabled = false
+    #expect(!preferences.requiresCodex)
+    #expect(!preferences.requiresAccessibility)
+    #expect(preferences.submissionMode.codexTarget == .codexApp)
+}
+
 private func permissions(at url: URL) throws -> Int {
     let value = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions]
     if let number = value as? NSNumber { return number.intValue }

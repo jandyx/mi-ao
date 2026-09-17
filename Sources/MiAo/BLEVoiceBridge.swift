@@ -10,6 +10,10 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
     }
 
     private let configuration: Configuration
+    private var codexController: CodexController { CodexTargetRegistry.shared.controller }
+    /// 连续 ATVV 能力协商超时次数，写入运行时状态文件供向导提示重新配对。
+    private var negotiationTimeouts = 0
+    private var lastVoiceResult: MiAoRuntimeStatusSnapshot.VoiceResult?
     private let statusHandler: ((MiAoRuntimeStatus) -> Void)?
     private let protocolHandler = ATVVProtocol()
     private var central: CBCentralManager!
@@ -51,6 +55,7 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         statusHandler: ((MiAoRuntimeStatus) -> Void)? = nil
     ) {
         self.configuration = configuration
+        CodexTargetRegistry.shared.configure(with: configuration)
         self.statusHandler = statusHandler
         voiceReconnectPolicy = VoiceReconnectPolicy(mode: configuration.voiceConnectionMode)
         super.init()
@@ -59,6 +64,18 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
                 self,
                 selector: #selector(voiceConnectionModeChanged),
                 name: MiAoRuntimeNotifications.voiceConnectionModeChanged,
+                object: nil
+            )
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: #selector(codexTargetChanged),
+                name: MiAoRuntimeNotifications.codexTargetChanged,
+                object: nil
+            )
+            DistributedNotificationCenter.default().addObserver(
+                self,
+                selector: #selector(voiceRetryRequested),
+                name: MiAoRuntimeNotifications.voiceRetryRequested,
                 object: nil
             )
         }
@@ -86,7 +103,7 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
                     try transcriber.transcribe(wavURL: wavURL)
                 },
                 submit: { text, force, completion in
-                    CodexSubmitter().submit(text, force: force, completion: completion)
+                    CodexTargetRegistry.shared.controller.submit(text, force: force, completion: completion)
                 }
             )
             let outputDirectoryExisted = FileManager.default.fileExists(
@@ -487,7 +504,7 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         case .retry(let attempt, let delay):
             voiceReconnectSleeping = false
             log("连接暂不可用：\(reason)；\(String(format: "%.0f", delay)) 秒后自动重试")
-            publish(.reconnecting(attempt: attempt, delaySeconds: Int(ceil(delay))))
+            publish(.reconnecting(attempt: attempt, delaySeconds: Int(ceil(delay)), reason: reason))
             reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) {
                 [weak self] _ in
                 guard let self, !self.shutdownRequested else { return }
@@ -677,7 +694,8 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             sendCapabilitiesRequest()
         case .reconnect:
             let reason = "ATVV 能力协商超时（已尝试 \(capabilityRequestCount) 次）"
-            log("\(reason)，断开后重新连接")
+            negotiationTimeouts += 1
+            log("\(reason)，断开后重新连接；连续第 \(negotiationTimeouts) 次")
             publish(.error("遥控器未响应能力协商，正在重新连接"))
             disconnectReasonOverride = reason
             central.cancelPeripheralConnection(peripheral)
@@ -727,6 +745,7 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
                 stopCapabilityNegotiation()
                 try protocolHandler.acceptCapabilities(capabilities)
                 state = .ready
+                negotiationTimeouts = 0
                 voiceReconnectPolicy.reset()
                 voiceReconnectSleeping = false
                 log(
@@ -885,7 +904,7 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             gainDB: configuration.gainDB,
             outputDirectory: configuration.outputDirectory,
             reason: reason,
-            submitToCodex: configuration.submitToCodex,
+            submitToCodex: CodexTargetRegistry.shared.submitEnabled,
             forceSubmit: configuration.forceSubmit
         )
         let accepted = speechJobs.enqueue(request) { [weak self] result in
@@ -894,16 +913,33 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             case .success(let output):
                 self.log("转写：\(output.transcript)")
                 self.log("录音保存：\(output.wavURL.path)")
+                let target = request.submitToCodex ? self.codexController.displayName : nil
                 if output.submitted {
-                    self.log("已发送到 Codex")
+                    self.lastVoiceResult = .init(
+                        transcript: output.transcript, recordedAt: Date(), submissionTarget: target,
+                        submitted: true, detail: nil
+                    )
+                    self.log("已发送到 \(self.codexController.displayName)")
                     self.publish(.sent)
                 } else if let submissionError = output.submissionError {
+                    self.lastVoiceResult = .init(
+                        transcript: output.transcript, recordedAt: Date(), submissionTarget: target,
+                        submitted: false, detail: submissionError
+                    )
                     self.log("本次提交失败：\(submissionError)")
                     self.publish(.error(submissionError))
                 } else {
+                    self.lastVoiceResult = .init(
+                        transcript: output.transcript, recordedAt: Date(), submissionTarget: nil,
+                        submitted: false, detail: "仅转写，已保存并复制"
+                    )
                     self.publishReadyStatus()
                 }
             case .failure(let error):
+                self.lastVoiceResult = .init(
+                    transcript: "", recordedAt: Date(), submissionTarget: nil,
+                    submitted: false, detail: "处理失败：\(error.localizedDescription)"
+                )
                 self.log("本次处理失败：\(error.localizedDescription)")
                 self.publish(.error(error.localizedDescription))
             }
@@ -1029,8 +1065,25 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
             print("model: 未下载")
         }
         print("output: \(configuration.outputDirectory)")
+        if let snapshot = RuntimeStatusFile.read() {
+            let alive = kill(snapshot.pid, 0) == 0
+            print(
+                "语音链路(\(alive ? "运行中 pid \(snapshot.pid)" : "上次运行 pid \(snapshot.pid)")): \(snapshot.label)"
+                    + (snapshot.issue.map { " · \($0)" } ?? "")
+                    + (snapshot.negotiationTimeouts > 0 ? " · 连续 ATVV 协商超时 \(snapshot.negotiationTimeouts) 次" : "")
+            )
+            if snapshot.suggestsRepairing {
+                print("语音链路建议: 遥控器连续未响应 ATVV 握手；先关开蓝牙，仍失败则长按 菜单+HOME 重新配对")
+            }
+        } else {
+            print("语音链路: 无运行时状态记录")
+        }
+        print("发送目标: \(configuration.submitTarget.displayName)")
         for line in CodexSubmitter().editorDiagnostics() {
             print("Codex editor: \(line)")
+        }
+        for line in CodexController(target: .codexCLI, cliTerminal: configuration.cliTerminal).diagnostics() {
+            print("Codex CLI: \(line)")
         }
     }
 
@@ -1096,6 +1149,20 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
         startScan()
     }
 
+    @objc private func codexTargetChanged(_ notification: Notification) {
+        let snapshot = AppPreferencesStore().load()
+        if case .unsupportedVersion(let version) = snapshot.state {
+            fputs("运行时未更新发送目标：schema v\(version) 过新\n", stderr)
+            return
+        }
+        CodexTargetRegistry.shared.apply(preferences: snapshot.preferences)
+        let controller = CodexTargetRegistry.shared.controller
+        log(
+            "发送目标已更新：\(CodexTargetRegistry.shared.submitEnabled ? controller.displayName : "仅转写")"
+                + (controller.target == .codexCLI ? " · \(controller.cliTerminal.displayName)" : "")
+        )
+    }
+
     @objc private func voiceConnectionModeChanged(_ notification: Notification) {
         let snapshot = AppPreferencesStore().load()
         if case .unsupportedVersion(let version) = snapshot.state {
@@ -1158,5 +1225,27 @@ final class BLEVoiceBridge: NSObject, CBCentralManagerDelegate, CBPeripheralDele
 
     private func publish(_ status: MiAoRuntimeStatus) {
         statusHandler?(status)
+        guard configuration.mode == .run else { return }
+        let issue: String?
+        switch status {
+        case .reconnecting(_, _, let reason): issue = reason
+        case .error(let message): issue = message
+        case .voiceSleeping: issue = "智能休眠：遥控器多次未响应，等待按键唤醒"
+        default: issue = nil
+        }
+        RuntimeStatusFile.write(
+            MiAoRuntimeStatusSnapshot(
+                pid: ProcessInfo.processInfo.processIdentifier,
+                label: status.label,
+                issue: issue,
+                negotiationTimeouts: negotiationTimeouts,
+                updatedAt: Date(),
+                lastVoice: lastVoiceResult
+            )
+        )
+    }
+
+    @objc private func voiceRetryRequested(_ notification: Notification) {
+        requestVoiceRetry(trigger: "设置向导")
     }
 }

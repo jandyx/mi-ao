@@ -85,7 +85,7 @@
 | --- | --- |
 | 操作系统 | **macOS 14+**；当前不支持 Windows / Linux |
 | 已验证硬件 | 小米蓝牙遥控器 2 Pro，固件 2671，通过 Bluetooth Low Energy 连接 |
-| 目标应用 | Codex macOS App（bundle ID `com.openai.codex`） |
+| 目标应用 | Codex macOS App（bundle ID `com.openai.codex`），或终端里的 Codex CLI（tmux / Terminal / iTerm2 / Ghostty / WezTerm / kitty / Warp / VS Code 等） |
 | 本地工具链 | Swift 6.0+、Xcode Command Line Tools、Homebrew、`whisper.cpp` |
 | 系统权限 | 蓝牙是核心必需；辅助功能只在自动发送或按键控制开启时必需；登录时启动永远可选 |
 | 语音链路 | ATVV v0.4 / v1.0 → ADPCM 解码 → 本地 Whisper 转写 → Codex |
@@ -132,12 +132,12 @@ AUDIO_STOP reason=remote-release
 | 方向环 | 鼠标模式：移动指针；方向键模式：发送上下左右 |
 | 中间确认 | 固定发送 Return |
 | 返回 | 固定发送 Escape |
-| 音量 `+` / `-` | Codex 上一个 / 下一个会话 |
+| 音量 `+` / `-` | Codex App：上一个 / 下一个会话；Codex CLI：上一个 / 下一个终端 Tab 或 tmux 窗口 |
 | `TV` | 切换鼠标模式 / 方向键模式 |
 | `HOME` | 单击 Page Down；350 ms 内双击 Page Up |
 | 菜单 | 鼠标右键（沿用 macOS 原生行为） |
 | 语音 | 保持原有按住说话 |
-| 电源 | 启动 Codex；已运行时聚焦 |
+| 电源 | 启动 Codex；已运行时聚焦（Codex CLI 模式在选定终端里打开 `codex`，或聚焦运行中的 codex 窗格） |
 
 > **状态边界：** 小米 2 Pro 固件 2671 的十二键硬件档案已按新格式人工确认。最终安装版已现场复核方向上、确认、TV、语音的完整按下/松开，方向上真实进入“移动鼠标 · 上”菜单栏指令态；音量加减切换 Codex 会话已完成双向真机验收。HOME 单/双击、电源和多显示器定位继续作为 1.0 逐项与压力验收，不冒充 V2 现场证据。
 
@@ -188,6 +188,29 @@ cd mi-ao
 ```bash
 ./scripts/run.sh --name "小米蓝牙语音遥控器" --no-buttons
 ```
+
+### Codex CLI 模式
+
+不用 Codex 桌面 App、直接在终端里跑 `codex` 的用户，在向导“使用偏好 → 语音发送”选择 **Codex CLI**，再在“Codex CLI 所在终端”里选 tmux 或某个已安装终端（默认自动探测）。米遥会检查 `codex` 是否安装、是否已 `codex login`，并列出当前运行中的 codex 实例；找不到时可直接点“启动 Codex CLI”或“登录 Codex CLI”，在选定终端里打开。
+
+松手后转写的投递方式：
+
+- **tmux（推荐）**：按 tty 找到承载 codex 的窗格，用 `paste-buffer -p`（bracketed paste）写入后再发 Enter。不抢焦点、不碰剪贴板，也不需要辅助功能权限。
+- **终端 App**：沿父进程链找到承载 codex 的终端（任何终端都通用，包括 VS Code 集成终端），激活后走剪贴板 + `⌘V` + Return。需要辅助功能权限；粘贴进该终端当前前台 Tab。
+
+"Codex CLI 启动命令" 可改成你自己的命令或 alias（例如 `cxd`），电源键和 "启动 Codex CLI" 都会在你的登录 shell（`$SHELL -lic`，zsh / bash / fish 均可）里执行它，所以 PATH 和 alias 与你平时终端一致。
+
+命令行等价写法：
+
+```bash
+./scripts/run.sh --name "小米蓝牙语音遥控器" --submit-target codex-cli                      # 自动探测
+./scripts/run.sh --name "小米蓝牙语音遥控器" --submit-target codex-cli --cli-terminal tmux     # 只投递 tmux
+./scripts/run.sh --name "小米蓝牙语音遥控器" --submit-target codex-cli --cli-terminal app:com.googlecode.iterm2
+./scripts/run.sh --name "小米蓝牙语音遥控器" --submit-target codex-cli --tmux-target %3       # 指定窗格，跳过探测
+./scripts/run.sh --name "小米蓝牙语音遥控器" --submit-target codex-cli --cli-launch-command cxd  # 电源键执行 alias
+```
+
+Codex CLI 模式不需要 Codex App 及其辅助功能兼容参数；按键里的“上一个 / 下一个会话”改为切换终端 Tab / tmux 窗口。`./scripts/bridge.sh doctor` 会打印安装、登录、运行实例和已安装终端。
 
 其他遥控器请先按 [快速开始](docs/QUICKSTART.md) 采集脱敏协议证据，不要盲猜 UUID。
 

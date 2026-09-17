@@ -91,6 +91,18 @@ enum ButtonAction: String, CaseIterable, Codable {
         case .unmapped: return "不执行动作"
         }
     }
+
+    /// Codex 专属动作在 Codex CLI 模式下语义不同：会话切换变成终端 Tab / tmux 窗口切换。
+    func displayName(target: CodexSubmitTarget) -> String {
+        guard target == .codexCLI else { return displayName }
+        switch self {
+        case .codexFocus: return "聚焦 Codex CLI"
+        case .codexLaunchOrFocus: return "启动或聚焦 Codex CLI"
+        case .codexPreviousTask: return "Codex CLI · 上一个 Tab"
+        case .codexNextTask: return "Codex CLI · 下一个 Tab"
+        default: return displayName
+        }
+    }
 }
 
 enum ShortcutModifier: String, CaseIterable, Codable, Hashable {

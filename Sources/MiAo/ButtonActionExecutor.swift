@@ -40,6 +40,11 @@ final class ButtonActionExecutor: @unchecked Sendable {
     private(set) var preset: ButtonPreset
     private var catalog: ButtonPresetCatalog
     private let debug: Bool
+    private let codexControllerOverride: CodexController?
+    /// 运行时跟随共享目标热更新；设置向导预览用显式传入的目标。
+    var codexController: CodexController {
+        codexControllerOverride ?? CodexTargetRegistry.shared.controller
+    }
     private let controlModeHandler: ((RemoteControlMode) -> Void)?
     private let presetChangeHandler: ((ButtonPreset) -> Void)?
     private let activityHandler: ((MiAoCommandActivity) -> Void)?
@@ -61,6 +66,7 @@ final class ButtonActionExecutor: @unchecked Sendable {
         preset: ButtonPreset,
         catalog: ButtonPresetCatalog = .builtIn,
         debug: Bool = false,
+        codexController: CodexController? = nil,
         controlModeHandler: ((RemoteControlMode) -> Void)? = nil,
         presetChangeHandler: ((ButtonPreset) -> Void)? = nil,
         activityHandler: ((MiAoCommandActivity) -> Void)? = nil
@@ -68,6 +74,7 @@ final class ButtonActionExecutor: @unchecked Sendable {
         self.preset = preset
         self.catalog = catalog
         self.debug = debug
+        self.codexControllerOverride = codexController
         self.controlModeHandler = controlModeHandler
         self.presetChangeHandler = presetChangeHandler
         self.activityHandler = activityHandler
@@ -171,25 +178,33 @@ final class ButtonActionExecutor: @unchecked Sendable {
         case .homePageNavigation:
             break
         case .codexFocus:
-            let succeeded = CodexSubmitter().activateCodex()
-            print(succeeded ? "已聚焦 Codex" : "Codex 未运行")
-            activityHandler?(.codexFocus(succeeded: succeeded))
+            let target = codexController.target
+            let succeeded = codexController.activate()
+            print(succeeded ? "已聚焦 \(target.displayName)" : "\(target.displayName) 未运行")
+            activityHandler?(.codexFocus(succeeded: succeeded, target: target))
         case .codexLaunchOrFocus:
-            let result = CodexSubmitter().launchOrActivateCodex()
+            let target = codexController.target
+            let result = codexController.launchOrActivate()
             switch result {
-            case .activated: print("已聚焦 Codex")
+            case .activated: print("已聚焦 \(target.displayName)")
             case .launchRequested: print("正在启动 Codex")
             case .unavailable: print("未找到 Codex App，请先安装 Codex")
+            case .cliLaunchRequested(let terminal): print("正在 \(terminal) 启动 Codex CLI")
+            case .cliNotFound(let hint): print("未找到运行中的 Codex CLI：\(hint)")
             }
-            activityHandler?(.codexActivation(result))
-        case .codexPreviousTask:
-            let succeeded = CodexSubmitter().navigateTask(.previous)
-            print(succeeded ? "Codex：上一个会话" : "Codex 未运行或找不到会话菜单，未切换")
-            activityHandler?(.codexTask(.previous, succeeded: succeeded))
-        case .codexNextTask:
-            let succeeded = CodexSubmitter().navigateTask(.next)
-            print(succeeded ? "Codex：下一个会话" : "Codex 未运行或找不到会话菜单，未切换")
-            activityHandler?(.codexTask(.next, succeeded: succeeded))
+            activityHandler?(.codexActivation(result, target: target))
+        case .codexPreviousTask, .codexNextTask:
+            let target = codexController.target
+            let direction: CodexTaskDirection = action == .codexPreviousTask ? .previous : .next
+            let succeeded = codexController.navigateTask(direction)
+            if succeeded {
+                print(action.displayName(target: target))
+            } else if target == .codexCLI {
+                print("未找到运行中的 Codex CLI，未切换 Tab")
+            } else {
+                print("Codex 未运行或找不到会话菜单，未切换")
+            }
+            activityHandler?(.codexTask(direction, succeeded: succeeded, target: target))
         case .presetCycle:
             print("旧版循环切换已停用；请在按键配置中为 TV 选择目标配置")
             activityHandler?(.legacyPresetCycleUnavailable())

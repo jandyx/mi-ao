@@ -216,7 +216,7 @@ private final class SetupToggleRowView: SetupSurfaceView {
 }
 
 private final class SetupSegmentedRowView: SetupSurfaceView {
-    init(title: String, detail: String, control: NSSegmentedControl) {
+    init(title: String, detail: String, control: NSControl) {
         super.init(radius: 18)
 
         let titleLabel = NSTextField(labelWithString: title)
@@ -254,6 +254,270 @@ private final class SetupSegmentedRowView: SetupSurfaceView {
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
+}
+
+/// “语音”页：链路状态、最近一次转写与发送结果、转写记录。
+private final class VoiceStatusPageView: NSView {
+    var onRetry: (() -> Void)?
+    var onOpenRecordings: (() -> Void)?
+    var onCopy: ((String) -> Void)?
+
+    private let statusIcon = NSImageView()
+    private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let statusDetailLabel = NSTextField(wrappingLabelWithString: "")
+    private let retryButton = NSButton(title: "重试语音连接", target: nil, action: nil)
+    private let openRecordingsButton = NSButton(title: "打开记录文件夹", target: nil, action: nil)
+
+    private let lastTimeLabel = NSTextField(labelWithString: "")
+    private let lastTranscriptLabel = NSTextField(wrappingLabelWithString: "")
+    private let lastResultLabel = NSTextField(wrappingLabelWithString: "")
+    private let copyLastButton = NSButton(title: "复制转写", target: nil, action: nil)
+
+    private let historyHeader = NSTextField(labelWithString: "转写记录")
+    private let historyStack = NSStackView()
+    private var historyNames: [String] = []
+    private var lastTranscript = ""
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm:ss"
+        return formatter
+    }()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let statusCard = SetupSurfaceView(radius: 18, emphasized: true)
+        statusIcon.translatesAutoresizingMaskIntoConstraints = false
+        statusIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 22, weight: .semibold)
+        statusLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        statusLabel.maximumNumberOfLines = 2
+        statusDetailLabel.font = .systemFont(ofSize: 11)
+        statusDetailLabel.textColor = .secondaryLabelColor
+        statusDetailLabel.maximumNumberOfLines = 4
+        retryButton.target = self
+        retryButton.action = #selector(retryPressed)
+        retryButton.setAccessibilityLabel("重试语音连接")
+        openRecordingsButton.target = self
+        openRecordingsButton.action = #selector(openRecordingsPressed)
+        openRecordingsButton.setAccessibilityLabel("在访达中打开录音与转写记录")
+        SetupInterfaceStyle.applyActionStyle(to: retryButton, primary: false, compact: true)
+        SetupInterfaceStyle.applyActionStyle(to: openRecordingsButton, primary: false, compact: true)
+        let statusText = NSStackView(views: [statusLabel, statusDetailLabel])
+        statusText.orientation = .vertical
+        statusText.alignment = .leading
+        statusText.spacing = 4
+        let statusButtons = NSStackView(views: [retryButton, openRecordingsButton])
+        statusButtons.orientation = .horizontal
+        statusButtons.spacing = 8
+        let statusRow = NSStackView(views: [statusIcon, statusText])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .top
+        statusRow.spacing = 12
+        let statusContent = NSStackView(views: [statusRow, statusButtons])
+        statusContent.orientation = .vertical
+        statusContent.alignment = .leading
+        statusContent.spacing = 12
+        Self.embed(statusContent, in: statusCard)
+        statusText.widthAnchor.constraint(equalTo: statusRow.widthAnchor, constant: -44).isActive = true
+
+        let lastCard = SetupSurfaceView(radius: 18)
+        let lastTitle = NSTextField(labelWithString: "最近一次")
+        lastTitle.font = .systemFont(ofSize: 14, weight: .semibold)
+        lastTimeLabel.font = .systemFont(ofSize: 11)
+        lastTimeLabel.textColor = .secondaryLabelColor
+        lastTranscriptLabel.font = .systemFont(ofSize: 14)
+        lastTranscriptLabel.maximumNumberOfLines = 6
+        lastResultLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        lastResultLabel.maximumNumberOfLines = 3
+        copyLastButton.target = self
+        copyLastButton.action = #selector(copyLastPressed)
+        copyLastButton.setAccessibilityLabel("复制最近一次转写")
+        SetupInterfaceStyle.applyActionStyle(to: copyLastButton, primary: false, compact: true)
+        let lastTitleRow = NSStackView(views: [lastTitle, lastTimeLabel])
+        lastTitleRow.orientation = .horizontal
+        lastTitleRow.spacing = 10
+        let lastContent = NSStackView(
+            views: [lastTitleRow, lastTranscriptLabel, lastResultLabel, copyLastButton]
+        )
+        lastContent.orientation = .vertical
+        lastContent.alignment = .leading
+        lastContent.spacing = 8
+        Self.embed(lastContent, in: lastCard)
+        lastTranscriptLabel.widthAnchor.constraint(equalTo: lastContent.widthAnchor).isActive = true
+        lastResultLabel.widthAnchor.constraint(equalTo: lastContent.widthAnchor).isActive = true
+
+        historyHeader.font = .systemFont(ofSize: 14, weight: .semibold)
+        historyStack.orientation = .vertical
+        historyStack.alignment = .leading
+        historyStack.spacing = 8
+
+        let stack = NSStackView(views: [statusCard, lastCard, historyHeader, historyStack])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            stack.topAnchor.constraint(equalTo: topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bottomAnchor),
+            statusCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            lastCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            historyStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    private static func embed(_ content: NSStackView, in card: SetupSurfaceView) {
+        content.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 18),
+            content.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -18),
+            content.topAnchor.constraint(equalTo: card.topAnchor, constant: 16),
+            content.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -16),
+        ])
+    }
+
+    func update(
+        snapshot: MiAoRuntimeStatusSnapshot?,
+        runtimeActive: Bool,
+        transcripts: [TranscriptEntry]
+    ) {
+        let symbol: String
+        let color: NSColor
+        if let snapshot {
+            if snapshot.suggestsRepairing {
+                symbol = "exclamationmark.triangle.fill"
+                color = .systemOrange
+                statusLabel.stringValue = "遥控器连续 \(snapshot.negotiationTimeouts) 次未响应 ATVV 能力协商"
+                statusDetailLabel.stringValue =
+                    "\(snapshot.label)。按键仍可用，语音不会工作：先重试；仍失败请关开系统蓝牙，或长按 菜单+HOME 重新配对。"
+            } else if let issue = snapshot.issue {
+                symbol = "exclamationmark.circle.fill"
+                color = .systemOrange
+                statusLabel.stringValue =
+                    snapshot.label.contains(issue) ? snapshot.label : "\(snapshot.label) · \(issue)"
+                statusDetailLabel.stringValue = "运行中的米遥会自动恢复；也可以手动重试。"
+            } else {
+                symbol = "checkmark.circle.fill"
+                color = .systemGreen
+                statusLabel.stringValue = snapshot.label
+                statusDetailLabel.stringValue = "按住遥控器语音键说话，松手后自动转写并发送。"
+            }
+            retryButton.isHidden = snapshot.issue == nil
+        } else {
+            symbol = runtimeActive ? "hourglass" : "moon.zzz"
+            color = .secondaryLabelColor
+            statusLabel.stringValue = runtimeActive ? "米遥正在启动" : "米遥未运行"
+            statusDetailLabel.stringValue =
+                runtimeActive ? "等待运行时报告语音链路状态…" : "启动米遥后，这里实时显示遥控器握手、录音与发送状态。"
+            retryButton.isHidden = true
+        }
+        statusIcon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: statusLabel.stringValue)
+        statusIcon.contentTintColor = color
+
+        if let voice = snapshot?.lastVoice {
+            lastTimeLabel.stringValue = Self.timeFormatter.string(from: voice.recordedAt)
+            lastTranscript = voice.transcript
+            lastTranscriptLabel.stringValue = voice.transcript.isEmpty ? "（没有转写出文字）" : voice.transcript
+            lastTranscriptLabel.textColor = voice.transcript.isEmpty ? .secondaryLabelColor : .labelColor
+            if voice.submitted {
+                lastResultLabel.stringValue = "已发送到 \(voice.submissionTarget ?? "Codex")"
+                lastResultLabel.textColor = .systemGreen
+            } else {
+                lastResultLabel.stringValue = voice.detail ?? "未发送"
+                lastResultLabel.textColor = voice.submissionTarget == nil ? .secondaryLabelColor : .systemOrange
+            }
+        } else if let latest = transcripts.first {
+            lastTimeLabel.stringValue = latest.recordedAt.map(Self.timeFormatter.string(from:)) ?? latest.fileName
+            lastTranscript = latest.text
+            lastTranscriptLabel.stringValue = latest.text.isEmpty ? "（空转写）" : latest.text
+            lastTranscriptLabel.textColor = .labelColor
+            lastResultLabel.stringValue = "来自记录文件；本次运行尚未录音"
+            lastResultLabel.textColor = .secondaryLabelColor
+        } else {
+            lastTimeLabel.stringValue = ""
+            lastTranscript = ""
+            lastTranscriptLabel.stringValue = "还没有录音。按住语音键说一句试试。"
+            lastTranscriptLabel.textColor = .secondaryLabelColor
+            lastResultLabel.stringValue = ""
+        }
+        copyLastButton.isEnabled = !lastTranscript.isEmpty
+
+        historyHeader.stringValue = transcripts.isEmpty ? "转写记录（暂无）" : "转写记录（最近 \(transcripts.count) 条）"
+        let names = transcripts.map(\.fileName)
+        guard names != historyNames else { return }
+        historyNames = names
+        historyStack.arrangedSubviews.forEach {
+            historyStack.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for entry in transcripts {
+            let row = makeHistoryRow(entry)
+            historyStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: historyStack.widthAnchor).isActive = true
+        }
+    }
+
+    private func makeHistoryRow(_ entry: TranscriptEntry) -> NSView {
+        let row = SetupSurfaceView(radius: 14)
+        let time = NSTextField(
+            labelWithString: entry.recordedAt.map(Self.timeFormatter.string(from:)) ?? entry.fileName)
+        time.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        time.textColor = .secondaryLabelColor
+        let text = NSTextField(wrappingLabelWithString: entry.text.isEmpty ? "（空转写）" : entry.text)
+        text.font = .systemFont(ofSize: 13)
+        text.maximumNumberOfLines = 2
+        text.textColor = entry.text.isEmpty ? .secondaryLabelColor : .labelColor
+        let copy = NSButton(title: "复制", target: self, action: #selector(copyRowPressed(_:)))
+        copy.identifier = NSUserInterfaceItemIdentifier(entry.fileName)
+        copy.isEnabled = !entry.text.isEmpty
+        copy.setAccessibilityLabel("复制 \(time.stringValue) 的转写")
+        SetupInterfaceStyle.applyActionStyle(to: copy, primary: false, compact: true)
+        let textColumn = NSStackView(views: [time, text])
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = 3
+        textColumn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        text.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        copy.setContentHuggingPriority(.required, for: .horizontal)
+        let content = NSStackView(views: [textColumn, copy])
+        content.orientation = .horizontal
+        content.alignment = .centerY
+        content.spacing = 10
+        content.distribution = .fill
+        content.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 14),
+            content.trailingAnchor.constraint(equalTo: row.trailingAnchor, constant: -14),
+            content.topAnchor.constraint(equalTo: row.topAnchor, constant: 10),
+            content.bottomAnchor.constraint(equalTo: row.bottomAnchor, constant: -10),
+            copy.widthAnchor.constraint(equalToConstant: 56),
+            text.widthAnchor.constraint(equalTo: textColumn.widthAnchor),
+            textColumn.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -66),
+        ])
+        rowTexts[entry.fileName] = entry.text
+        return row
+    }
+
+    private var rowTexts: [String: String] = [:]
+
+    @objc private func retryPressed() { onRetry?() }
+    @objc private func openRecordingsPressed() { onOpenRecordings?() }
+    @objc private func copyLastPressed() { onCopy?(lastTranscript) }
+    @objc private func copyRowPressed(_ sender: NSButton) {
+        guard let name = sender.identifier?.rawValue, let text = rowTexts[name] else { return }
+        onCopy?(text)
+    }
 }
 
 private final class SetupCheckRowView: SetupSurfaceView {
@@ -460,6 +724,8 @@ private final class ButtonMappingRowView: SetupSurfaceView {
     private let targetRow = NSStackView()
     private var currentBinding: ButtonBinding = .action(.unmapped)
     private var rowHeightConstraint: NSLayoutConstraint!
+    /// 决定 Codex 专属动作的显示名（App 会话 / CLI Tab）。
+    var codexTarget: CodexSubmitTarget = .codexApp
 
     init(button: RemoteButton) {
         self.button = button
@@ -564,7 +830,7 @@ private final class ButtonMappingRowView: SetupSurfaceView {
         switch binding {
         case .action(let action):
             selectedIdentifier = Choice.actionPrefix + action.rawValue
-            detailLabel.stringValue = action.displayName
+            detailLabel.stringValue = action.displayName(target: codexTarget)
         case .keyboardShortcut(let shortcut):
             selectedIdentifier = Choice.shortcut
             detailLabel.stringValue = "将发送 \(shortcut.displayName)；再次选择“录制自定义快捷键”可更换。"
@@ -633,7 +899,10 @@ private final class ButtonMappingRowView: SetupSurfaceView {
     }
 
     private func addActionItem(_ action: ButtonAction) {
-        addItem(title: action.displayName, identifier: Choice.actionPrefix + action.rawValue)
+        addItem(
+            title: action.displayName(target: codexTarget),
+            identifier: Choice.actionPrefix + action.rawValue
+        )
     }
 
     private func addItem(title: String, identifier: String) {
@@ -704,7 +973,17 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
     private let summaryLabel = NSTextField(wrappingLabelWithString: "")
     private let preferenceStateLabel = NSTextField(wrappingLabelWithString: "")
     private let loginItemStateLabel = NSTextField(wrappingLabelWithString: "")
-    private let automaticSubmitCheckbox = NSSwitch()
+    private let submissionModeControl = NSSegmentedControl(
+        labels: SubmissionMode.allCases.map(\.displayName),
+        trackingMode: .selectOne,
+        target: nil,
+        action: nil
+    )
+    private let cliTerminalPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private var cliTerminalRow: NSView?
+    private let cliLaunchCommandField = NSTextField(string: "")
+    private var cliLaunchCommandRow: NSView?
+    private let codexModeNoteLabel = NSTextField(wrappingLabelWithString: "")
     private let buttonControlCheckbox = NSSwitch()
     private let voiceConnectionModeControl = NSSegmentedControl(
         labels: VoiceConnectionMode.allCases.map(\.displayName),
@@ -732,6 +1011,7 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
     private let presetStateLabel = NSTextField(wrappingLabelWithString: "")
     private var mappingRows: [RemoteButton: ButtonMappingRowView] = [:]
     private var report: SetupEnvironmentReport?
+    private let voicePage = VoiceStatusPageView()
     private var bluetoothRequester: BluetoothAuthorizationRequester?
     private var process: Process?
     private var refreshTimer: Timer?
@@ -870,6 +1150,7 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         )
         pageTabs.addPage(makeTabPage(title: "按键配置", content: buttonMappingsView))
         pageTabs.addPage(makeTabPage(title: "按键指南", content: buttonGuideView))
+        pageTabs.addPage(makeTabPage(title: "语音", content: buildVoicePageView()))
         pageTabs.onSelectionChanged = { [weak self] in self?.refresh() }
         pageTabs.view.translatesAutoresizingMaskIntoConstraints = false
         pageTabs.view.setAccessibilityLabel("米遥设置分类")
@@ -1210,8 +1491,17 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
             detail: "开关只影响对应功能；关闭后，相关系统授权会立即变为可选。"
         )
 
-        automaticSubmitCheckbox.target = self
-        automaticSubmitCheckbox.action = #selector(preferencesChanged)
+        submissionModeControl.target = self
+        submissionModeControl.action = #selector(preferencesChanged)
+        cliTerminalPicker.target = self
+        cliTerminalPicker.action = #selector(cliTerminalChanged)
+        cliTerminalPicker.setAccessibilityLabel("Codex CLI 所在终端")
+        cliLaunchCommandField.target = self
+        cliLaunchCommandField.action = #selector(cliLaunchCommandChanged)
+        cliLaunchCommandField.placeholderString = CodexCLISubmitter.defaultLaunchCommand
+        cliLaunchCommandField.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        (cliLaunchCommandField.cell as? NSTextFieldCell)?.sendsActionOnEndEditing = true
+        cliLaunchCommandField.setAccessibilityLabel("Codex CLI 启动命令")
         buttonControlCheckbox.target = self
         buttonControlCheckbox.action = #selector(preferencesChanged)
         voiceConnectionModeControl.target = self
@@ -1230,11 +1520,25 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         preferenceStateLabel.font = .systemFont(ofSize: 11)
         preferenceStateLabel.textColor = .systemOrange
 
-        let automaticSubmitRow = SetupToggleRowView(
-            title: "自动发送到 Codex",
-            detail: "松开语音键后，转写内容会自动粘贴并发送。",
-            toggle: automaticSubmitCheckbox
+        let automaticSubmitRow = SetupSegmentedRowView(
+            title: "语音发送",
+            detail: "松开语音键后，转写发送到 Codex App、终端里的 Codex CLI，或只保存转写。",
+            control: submissionModeControl
         )
+        let cliTerminalRow = SetupSegmentedRowView(
+            title: "Codex CLI 所在终端",
+            detail: "决定转写发往哪里，以及「启动 Codex CLI」「登录」在哪个终端打开；tmux 无需辅助功能权限。",
+            control: cliTerminalPicker
+        )
+        self.cliTerminalRow = cliTerminalRow
+        let loginShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        let cliLaunchCommandRow = SetupSegmentedRowView(
+            title: "Codex CLI 启动命令",
+            detail:
+                "电源键或「启动 Codex CLI」时，在你的登录 shell（\(loginShell) -lic）里执行；可以用 alias 或带参数，例如 cxd。留空恢复 codex。",
+            control: cliLaunchCommandField
+        )
+        self.cliLaunchCommandRow = cliLaunchCommandRow
         let buttonControlRow = SetupToggleRowView(
             title: "遥控器按键控制",
             detail: "用方向、音量和常用键操作 Codex 与指针。",
@@ -1262,6 +1566,8 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         let preferenceViews: [NSView] = [
             sectionHeader,
             automaticSubmitRow,
+            cliTerminalRow,
+            cliLaunchCommandRow,
             buttonControlRow,
             voiceConnectionModeRow,
             loginRow,
@@ -1407,6 +1713,9 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
             title: "按钮映射",
             detail: "保存后会立即通知运行中的米遥热更新；按 TV 切换时也会同步记住目标配置。"
         )
+        codexModeNoteLabel.font = .systemFont(ofSize: 11)
+        codexModeNoteLabel.textColor = .systemOrange
+        codexModeNoteLabel.maximumNumberOfLines = 3
         let mappingStack = NSStackView()
         mappingStack.orientation = .vertical
         mappingStack.alignment = .leading
@@ -1428,14 +1737,18 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         }
 
         let stack = NSStackView(
-            views: [sectionHeader, configurationCard, retainedCard, mappingsHeader, mappingStack]
+            views: [
+                sectionHeader, configurationCard, retainedCard, mappingsHeader, codexModeNoteLabel,
+                mappingStack,
+            ]
         )
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
-        [sectionHeader, configurationCard, retainedCard, mappingsHeader, mappingStack].forEach {
-            $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-        }
+        [sectionHeader, configurationCard, retainedCard, mappingsHeader, codexModeNoteLabel, mappingStack]
+            .forEach {
+                $0.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            }
         refreshPresetEditor()
         return stack
     }
@@ -1472,7 +1785,10 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         presetPicker.isEnabled = storageWritable
 
         let targets = allPresets.filter { $0.id != draftPreset.id }
+        codexModeNoteLabel.stringValue = codexModeNote
+        codexModeNoteLabel.isHidden = codexModeNote.isEmpty
         for (button, row) in mappingRows {
+            row.codexTarget = preferences.submissionMode.codexTarget
             row.update(
                 binding: draftPreset.binding(for: button),
                 targetPresets: targets,
@@ -1712,6 +2028,10 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         let executor = ButtonActionExecutor(
             preset: draftPreset,
             catalog: testCatalog,
+            codexController: CodexController(
+                target: preferences.submissionMode.codexTarget,
+                cliTerminal: preferences.codexCLITerminal
+            ),
             activityHandler: { [weak self] activity in
                 self?.presentActionTestFeedback(activity, binding: binding)
             }
@@ -1909,6 +2229,45 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         return hero
     }
 
+    private func buildVoicePageView() -> NSView {
+        let header = buildSectionHeader(
+            title: "语音",
+            detail: "遥控器握手、录音与发送状态实时刷新；转写文本保存在本机记录目录，可随时复制。"
+        )
+        voicePage.onRetry = { [weak self] in
+            MiAoRuntimeNotifications.postVoiceRetryRequested()
+            self?.preferenceStateLabel.stringValue = "已请求运行中的米遥重试语音连接。"
+            self?.scheduleRefresh()
+        }
+        voicePage.onOpenRecordings = { [weak self] in
+            guard let self else { return }
+            try? FileManager.default.createDirectory(
+                atPath: configuration.outputDirectory, withIntermediateDirectories: true
+            )
+            NSWorkspace.shared.open(URL(fileURLWithPath: configuration.outputDirectory, isDirectory: true))
+        }
+        voicePage.onCopy = { text in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        let stack = NSStackView(views: [header, voicePage])
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        voicePage.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        return stack
+    }
+
+    private func updateVoicePage(report: SetupEnvironmentReport) {
+        voicePage.update(
+            snapshot: inspector.runtimeStatus,
+            runtimeActive: report.runtimeActive,
+            transcripts: TranscriptHistory.load(directory: configuration.outputDirectory)
+        )
+    }
+
     private func buildSectionHeader(title: String, detail: String) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 17, weight: .bold)
@@ -1963,6 +2322,7 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
                 action: #selector(performCheckAction(_:))
             )
         }
+        updateVoicePage(report: report)
 
         if report.runtimeActive {
             summaryLabel.stringValue = "米遥当前已经运行。这里可以复查环境；退出请使用菜单栏中的安全退出。"
@@ -2071,8 +2431,16 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
     }
 
     private func updatePreferenceControls() {
-        automaticSubmitCheckbox.state =
-            preferences.submissionMode == .codex ? .on : .off
+        submissionModeControl.selectedSegment =
+            SubmissionMode.allCases.firstIndex(of: preferences.submissionMode) ?? 0
+        cliTerminalRow?.isHidden = preferences.submissionMode != .codexCLI
+        cliLaunchCommandRow?.isHidden = preferences.submissionMode != .codexCLI
+        if preferences.submissionMode == .codexCLI {
+            updateCLITerminalPicker()
+            if cliLaunchCommandField.currentEditor() == nil {
+                cliLaunchCommandField.stringValue = preferences.codexCLILaunchCommand
+            }
+        }
         buttonControlCheckbox.state = preferences.buttonControlEnabled ? .on : .off
         voiceConnectionModeControl.selectedSegment =
             preferences.voiceConnectionMode == .alwaysReady ? 0 : 1
@@ -2082,7 +2450,9 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         } else {
             preferencesAreWritable = true
         }
-        automaticSubmitCheckbox.isEnabled = preferencesAreWritable
+        submissionModeControl.isEnabled = preferencesAreWritable
+        cliTerminalPicker.isEnabled = preferencesAreWritable
+        cliLaunchCommandField.isEnabled = preferencesAreWritable
         buttonControlCheckbox.isEnabled = preferencesAreWritable
         voiceConnectionModeControl.isEnabled = preferencesAreWritable
 
@@ -2274,8 +2644,10 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
 
     @objc private func preferencesChanged() {
         let previous = preferences
-        preferences.submissionMode =
-            automaticSubmitCheckbox.state == .on ? .codex : .transcriptionOnly
+        let modeIndex = submissionModeControl.selectedSegment
+        if SubmissionMode.allCases.indices.contains(modeIndex) {
+            preferences.submissionMode = SubmissionMode.allCases[modeIndex]
+        }
         preferences.buttonControlEnabled = buttonControlCheckbox.state == .on
         preferences.voiceConnectionMode =
             voiceConnectionModeControl.selectedSegment == 1 ? .smartSleep : .alwaysReady
@@ -2289,7 +2661,100 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
             preferences = previous
             showError(title: "偏好设置没有保存", message: error.localizedDescription)
         }
+        if preferences.submissionMode != previous.submissionMode {
+            MiAoRuntimeNotifications.postCodexTargetChanged()
+            refreshPresetEditor()
+        }
         refresh()
+    }
+
+    private enum CLITerminalItem {
+        static func identifier(for choice: CodexCLITerminalChoice) -> String { choice.rawValue }
+    }
+
+    private func updateCLITerminalPicker() {
+        guard cliTerminalPicker.menu != nil else { return }
+        let detected = CodexCLILocator().locate().first
+        let installed = TerminalCatalog.installed()
+        cliTerminalPicker.removeAllItems()
+        var choices: [(CodexCLITerminalChoice, String)] = [
+            (
+                .auto,
+                detected.map { "自动探测（当前：\($0.description)）" } ?? "自动探测（当前未找到运行中的 codex）"
+            )
+        ]
+        if TerminalCatalog.hasTmux() {
+            choices.append((.tmux, "tmux（无需辅助功能权限）"))
+        }
+        for installation in installed {
+            choices.append(
+                (
+                    .app(installation.app.bundleIdentifier),
+                    installation.app.displayName + (installation.isRunning ? " · 运行中" : "")
+                )
+            )
+        }
+        if case .app(let bundleIdentifier) = preferences.codexCLITerminal,
+            !installed.contains(where: { $0.app.bundleIdentifier == bundleIdentifier })
+        {
+            choices.append((preferences.codexCLITerminal, "\(preferences.codexCLITerminal.displayName) · 未安装"))
+        }
+        for (choice, title) in choices {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.representedObject = CLITerminalItem.identifier(for: choice)
+            cliTerminalPicker.menu?.addItem(item)
+        }
+        if let item = cliTerminalPicker.itemArray.first(where: {
+            ($0.representedObject as? String) == CLITerminalItem.identifier(for: preferences.codexCLITerminal)
+        }) {
+            cliTerminalPicker.select(item)
+        }
+    }
+
+    @objc private func cliTerminalChanged() {
+        guard
+            let raw = cliTerminalPicker.selectedItem?.representedObject as? String,
+            let choice = CodexCLITerminalChoice(rawValue: raw),
+            choice != preferences.codexCLITerminal
+        else { return }
+        let previous = preferences
+        preferences.codexCLITerminal = choice
+        do {
+            try preferencesStore.save(preferences)
+            preferencesLoadState = .loaded
+            MiAoRuntimeNotifications.postCodexTargetChanged()
+        } catch {
+            preferences = previous
+            showError(title: "终端选择没有保存", message: error.localizedDescription)
+        }
+        refresh()
+    }
+
+    @objc private func cliLaunchCommandChanged() {
+        let trimmed = cliLaunchCommandField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let command = trimmed.isEmpty ? CodexCLISubmitter.defaultLaunchCommand : trimmed
+        guard command != preferences.codexCLILaunchCommand else {
+            cliLaunchCommandField.stringValue = command
+            return
+        }
+        let previous = preferences
+        preferences.codexCLILaunchCommand = command
+        do {
+            try preferencesStore.save(preferences)
+            preferencesLoadState = .loaded
+            MiAoRuntimeNotifications.postCodexTargetChanged()
+        } catch {
+            preferences = previous
+            showError(title: "启动命令没有保存", message: error.localizedDescription)
+        }
+        cliLaunchCommandField.stringValue = preferences.codexCLILaunchCommand
+        refresh()
+    }
+
+    private var codexModeNote: String {
+        guard preferences.submissionMode == .codexCLI else { return "" }
+        return
+            "当前为 Codex CLI 模式：「上一个 / 下一个会话」切换终端 Tab 或 tmux 窗口；「启动或聚焦」在 \(preferences.codexCLITerminal.displayName) 执行 \(preferences.codexCLILaunchCommand)。"
     }
 
     @objc private func loginItemChanged() {
@@ -2327,6 +2792,24 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
             openPrivacyPane(anchor: "Privacy_Bluetooth")
         case .prepareCodex:
             prepareCodex()
+        case .installCodexCLI:
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString("brew install codex", forType: .string)
+            if let url = URL(string: "https://developers.openai.com/codex/cli") {
+                NSWorkspace.shared.open(url)
+            }
+            showInfo(
+                title: "安装 Codex CLI",
+                message: "已把 brew install codex 复制到剪贴板；也可以用 npm i -g @openai/codex。安装完成后回到这里点“刷新”。"
+            )
+        case .loginCodexCLI:
+            runCodexCLI(commandLine: "codex login", purpose: "登录")
+        case .launchCodexCLI:
+            runCodexCLI(commandLine: preferences.codexCLILaunchCommand, purpose: "启动")
+        case .retryVoiceConnection:
+            MiAoRuntimeNotifications.postVoiceRetryRequested()
+            preferenceStateLabel.stringValue = "已请求运行中的米遥重试语音连接；几秒后点“重新检查”查看结果。"
+            scheduleRefresh()
         case .runSetup:
             runSetupRepair()
         case .revealSource:
@@ -2379,20 +2862,11 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
         }
     }
 
+    /// 启动成功后向导保持打开：自动刷新会切到“米遥当前已经运行”状态，
+    /// “权限与连接 → 语音链路”能继续看到遥控器握手结果；用户随时可以自己关窗口。
     private func showLaunchSuccessAndFinish() {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "米遥已在菜单栏运行"
-        alert.informativeText = "设置已保存。接下来可以从菜单栏查看连接状态、打开设置或安全退出。"
-        alert.addButton(withTitle: "完成")
-        guard let window else {
-            alert.runModal()
-            NSApplication.shared.terminate(nil)
-            return
-        }
-        alert.beginSheetModal(for: window) { _ in
-            NSApplication.shared.terminate(nil)
-        }
+        preferenceStateLabel.stringValue = "米遥已在菜单栏运行，设置已保存；这个窗口可以留着观察语音链路，也可以直接关闭。"
+        refresh()
     }
 
     private func prepareCodex() {
@@ -2558,6 +3032,38 @@ final class SetupGuideWindowController: NSWindowController, NSWindowDelegate, NS
             }
         }
         refreshTimer?.tolerance = 0.25
+    }
+
+    private func runCodexCLI(commandLine: String, purpose: String) {
+        let submitter = CodexCLISubmitter(
+            choice: preferences.codexCLITerminal,
+            launchCommand: preferences.codexCLILaunchCommand
+        )
+        let result = submitter.launch(commandLine: commandLine)
+        switch result {
+        case .cliLaunchRequested(let terminal):
+            preferenceStateLabel.stringValue = "已在 \(terminal) \(purpose) Codex CLI；完成后请点“刷新”。"
+        case .cliNotFound(let hint):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(commandLine, forType: .string)
+            showInfo(title: "请手动\(purpose) Codex CLI", message: "\(hint)；命令已复制到剪贴板。")
+        case .activated, .launchRequested, .unavailable:
+            break
+        }
+        scheduleRefresh()
+    }
+
+    private func showInfo(title: String, message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "好")
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
     }
 
     private func showError(title: String, message: String) {

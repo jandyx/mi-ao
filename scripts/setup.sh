@@ -26,6 +26,13 @@ echo ""
 echo "安装完成：$BUILD_BIN"
 echo "App：$INSTALL_APP"
 echo "模型：$MODEL_PATH"
+if command -v codex >/dev/null 2>&1; then
+  codex_summary="$(codex --version 2>/dev/null | awk '{print $NF}')"
+  codex_login="$(codex login status 2>&1 || echo '未登录')"
+  echo "Codex CLI：${codex_summary:-已安装} · $codex_login"
+else
+  echo "Codex CLI：未安装（仅 Codex CLI 模式需要）"
+fi
 echo "下一步：跟随米遥设置向导完成配对、权限、Codex 检查和首次启动。"
 echo "命令行备用启动：$ROOT/scripts/start.sh"
 echo "命令行安全停止：$ROOT/scripts/stop.sh"

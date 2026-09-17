@@ -3,10 +3,26 @@ import AppKit
 import ApplicationServices
 import Foundation
 
-enum CodexActivationResult: Equatable {
+enum CodexSubmitTarget: String, Equatable, Sendable {
+    case codexApp = "codex-app"
+    case codexCLI = "codex-cli"
+
+    var displayName: String {
+        switch self {
+        case .codexApp: return "Codex App"
+        case .codexCLI: return "Codex CLI"
+        }
+    }
+}
+
+enum CodexActivationResult: Equatable, Sendable {
     case activated
     case launchRequested
     case unavailable
+    /// Codex CLI 未运行，且已按选定终端发起启动。
+    case cliLaunchRequested(terminal: String)
+    /// Codex CLI 未运行，无法自动启动；附带给用户的提示。
+    case cliNotFound(hint: String)
 }
 
 enum CodexTaskDirection: Equatable {
@@ -85,23 +101,7 @@ struct CodexSubmitter {
                 }
             }
 
-            let snapshot = PasteboardSnapshot.capture()
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            guard pasteboard.setString(text, forType: .string) else {
-                snapshot.restore(ifUnchangedSince: pasteboard.changeCount)
-                completion(.failure(BridgeError.submission("无法写入剪贴板，已取消发送")))
-                return
-            }
-            let injectedChangeCount = pasteboard.changeCount
-            postKey(keyCode: 9, flags: .maskCommand)  // Cmd+V
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                postKey(keyCode: 36, flags: [])  // Return
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    snapshot.restore(ifUnchangedSince: injectedChangeCount)
-                    completion(.success(()))
-                }
-            }
+            CodexInjection.pasteAndReturn(text, returnDelay: 0.2, completion: completion)
         }
     }
 
@@ -290,11 +290,18 @@ struct CodexSubmitter {
     }
 
     private func copyOnly(_ text: String) {
+        CodexInjection.copyOnly(text)
+    }
+}
+
+/// Codex App 与 Codex CLI（终端 App 路）共用的剪贴板注入与按键工具。
+enum CodexInjection {
+    static func copyOnly(_ text: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
 
-    private func postKey(keyCode: CGKeyCode, flags: CGEventFlags) {
+    static func postKey(keyCode: CGKeyCode, flags: CGEventFlags) {
         let source = CGEventSource(stateID: .hidSystemState)
         let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)
         let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
@@ -302,6 +309,31 @@ struct CodexSubmitter {
         up?.flags = flags
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
+    }
+
+    /// 快照剪贴板 → 写入文本 → Cmd+V → 延时 → Return → 还原剪贴板。必须在主线程调用。
+    static func pasteAndReturn(
+        _ text: String,
+        returnDelay: TimeInterval,
+        completion: @escaping @Sendable (Result<Void, Error>) -> Void
+    ) {
+        let snapshot = PasteboardSnapshot.capture()
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(text, forType: .string) else {
+            snapshot.restore(ifUnchangedSince: pasteboard.changeCount)
+            completion(.failure(BridgeError.submission("无法写入剪贴板，已取消发送")))
+            return
+        }
+        let injectedChangeCount = pasteboard.changeCount
+        postKey(keyCode: 9, flags: .maskCommand)  // Cmd+V
+        DispatchQueue.main.asyncAfter(deadline: .now() + returnDelay) {
+            postKey(keyCode: 36, flags: [])  // Return
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                snapshot.restore(ifUnchangedSince: injectedChangeCount)
+                completion(.success(()))
+            }
+        }
     }
 }
 

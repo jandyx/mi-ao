@@ -8,12 +8,18 @@ CODEX_ACCESSIBILITY_SCRIPT="${MI_AO_CODEX_ACCESSIBILITY_SCRIPT:-$ROOT/scripts/co
 OPEN_BIN="${MI_AO_OPEN_BIN:-/usr/bin/open}"
 
 needs_codex_compatibility=true
+previous_argument=""
 for argument in "$@"; do
   case "$argument" in
     --help|-h|--no-submit|--force-submit)
       needs_codex_compatibility=false
       ;;
   esac
+  # Codex CLI 目标不经过 Codex App，无需辅助功能兼容参数。
+  if [[ "$previous_argument" == "--submit-target" && "$argument" == "codex-cli" ]]; then
+    needs_codex_compatibility=false
+  fi
+  previous_argument="$argument"
 done
 
 if $needs_codex_compatibility && [[ "${MI_AO_CODEX_ACCESSIBILITY_READY:-0}" != "1" ]]; then

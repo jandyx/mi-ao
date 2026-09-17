@@ -78,6 +78,7 @@ check:
 	zsh Tests/Shell/RemoteMappingTests.sh
 	zsh Tests/Shell/KeyboardIsolationTests.sh
 	zsh Tests/Shell/CodexLaunchGateTests.sh
+	zsh Tests/Shell/PreflightCodexCLITests.sh
 	zsh Tests/Shell/ReleaseContractTests.sh
 	zsh Tests/Shell/RepairRuntimeTests.sh
 	zsh Tests/Shell/InstallAppTests.sh

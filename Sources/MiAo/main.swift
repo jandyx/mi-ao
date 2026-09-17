@@ -53,6 +53,8 @@ do {
     var menuBarController: MenuBarController?
     var terminationSignalSource: DispatchSourceSignal?
     if configuration.mode == .run {
+        // 运行时 stdout 通常重定向到日志文件；改成行缓冲，按键 / 发送结果能即时写入。
+        setvbuf(stdout, nil, _IOLBF, 0)
         runtimeSessionNeedsCleanup = true
         guard RuntimeSessionCleanup.registerCurrentProcess() else {
             throw BridgeError.configuration("无法登记 LaunchServices 运行进程，已拒绝启动")

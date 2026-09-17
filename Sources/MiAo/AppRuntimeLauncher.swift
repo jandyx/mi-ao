@@ -12,9 +12,11 @@ struct AppRuntimeLaunchPlan: Equatable {
         preferences: AppPreferences,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppRuntimeLaunchPlan {
-        AppRuntimeLaunchPlan(
+        // MI_AO_DEBUG=1 open 米遥.app：让 App 启动的运行时也打印原始 GATT / HID 数据，便于排查。
+        let debugArguments = environment["MI_AO_DEBUG"] == "1" ? ["--debug"] : []
+        return AppRuntimeLaunchPlan(
             executableURL: URL(fileURLWithPath: "/bin/zsh"),
-            arguments: [context.startScriptURL.path] + preferences.runtimeArguments,
+            arguments: [context.startScriptURL.path] + preferences.runtimeArguments + debugArguments,
             currentDirectoryURL: context.startScriptURL.deletingLastPathComponent()
                 .deletingLastPathComponent(),
             environment: MiAoProcessEnvironment.sanitizedForExternalProcess(environment)

@@ -11,7 +11,7 @@ enum MiAoRuntimeStatus: Equatable {
     case processing(Int)
     case sent
     case disconnected
-    case reconnecting(attempt: Int, delaySeconds: Int)
+    case reconnecting(attempt: Int, delaySeconds: Int, reason: String)
     case voiceSleeping
     case stopping
     case error(String)
@@ -27,8 +27,8 @@ enum MiAoRuntimeStatus: Equatable {
             return count > 1 ? "后台转写中 · 另有一条等待" : "后台转写中 · 可继续说话"
         case .sent: return "已发送到 Codex"
         case .disconnected: return "遥控器已断开 · 正在重连"
-        case .reconnecting(let attempt, let delaySeconds):
-            return "重连第 \(attempt) 次 · \(delaySeconds) 秒后继续"
+        case .reconnecting(let attempt, let delaySeconds, let reason):
+            return "重连第 \(attempt) 次 · \(delaySeconds) 秒后继续 · \(reason)"
         case .voiceSleeping: return "智能休眠 · 按键即可唤醒"
         case .stopping: return "正在安全退出"
         case .error(let message): return "需要处理：\(message)"
@@ -327,7 +327,8 @@ final class MenuBarController: NSObject, NSPopoverDelegate {
         panel.onFocusCodex = { [weak self] in
             guard let self else { return }
             self.closePopover()
-            self.show(activity: .codexActivation(CodexSubmitter().launchOrActivateCodex()))
+            let controller = CodexTargetRegistry.shared.controller
+            self.show(activity: .codexActivation(controller.launchOrActivate(), target: controller.target))
         }
         panel.onOpenRecordings = { [weak self] in
             self?.closePopover()

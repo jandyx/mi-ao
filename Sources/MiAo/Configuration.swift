@@ -32,6 +32,10 @@ struct Configuration {
     var silenceThreshold: Double = 35
     var gainDB: Double = 20
     var submitToCodex = true
+    var submitTarget: CodexSubmitTarget = .codexApp
+    var cliTerminal: CodexCLITerminalChoice = .auto
+    var cliLaunchCommand = CodexCLISubmitter.defaultLaunchCommand
+    var tmuxTarget: String?
     var forceSubmit = false
     var debug = false
     var includeIdentifiers = false
@@ -136,6 +140,26 @@ struct Configuration {
                     ).expandingTildeInPath
             case "--no-buttons":
                 config.buttonsEnabled = false
+            case "--submit-target":
+                let raw = try requireValue(for: flag)
+                guard let target = CodexSubmitTarget(rawValue: raw) else {
+                    throw BridgeError.configuration(
+                        "\(flag) 需要 codex-app 或 codex-cli，收到: \(raw)"
+                    )
+                }
+                config.submitTarget = target
+            case "--cli-terminal":
+                let raw = try requireValue(for: flag)
+                guard let choice = CodexCLITerminalChoice(rawValue: raw) else {
+                    throw BridgeError.configuration(
+                        "\(flag) 需要 auto、tmux 或 app:<bundle id>，收到: \(raw)"
+                    )
+                }
+                config.cliTerminal = choice
+            case "--cli-launch-command":
+                config.cliLaunchCommand = try requireValue(for: flag)
+            case "--tmux-target":
+                config.tmuxTarget = try requireValue(for: flag)
             case "--voice-connection-mode":
                 let raw = try requireValue(for: flag)
                 guard let mode = VoiceConnectionMode(rawValue: raw) else {
@@ -223,6 +247,10 @@ struct Configuration {
           --gain-db <分贝>           写入 WAV 前增益，默认 20
           --output-dir <目录>        WAV 和 transcript 保存目录
           --no-submit                只转写，不发送给 Codex
+          --submit-target <目标>     codex-app（默认）或 codex-cli（终端里的 Codex CLI）
+          --cli-terminal <选择>      codex-cli 所在终端：auto（默认）、tmux 或 app:<bundle id>
+          --cli-launch-command <命令> 电源键 / 启动 Codex CLI 时在登录 shell 里执行的命令，默认 codex，可用 alias
+          --tmux-target <窗格>       codex-cli 直接投递到该 tmux 窗格 / 目标，跳过自动探测
           --force-submit             无法验证焦点控件时仍向 Codex 粘贴并回车
           --debug                    打印原始 GATT 数据和运行时 HID 按键映射
           --preset <标识>            按键映射套装，默认 pointer

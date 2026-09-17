@@ -12,6 +12,7 @@ enum SetupCheckID: String, CaseIterable {
     case bluetooth
     case codex
     case source
+    case voiceLink
 }
 
 enum SetupCheckState: Equatable {
@@ -44,6 +45,10 @@ enum SetupCheckAction: Equatable {
     case openBluetoothSettings
     case openBluetoothPrivacy
     case prepareCodex
+    case installCodexCLI
+    case loginCodexCLI
+    case launchCodexCLI
+    case retryVoiceConnection
     case runSetup
     case revealSource
 }
@@ -216,13 +221,63 @@ struct SetupEnvironmentInspector {
                 speechEngineCheck(configuration: configuration),
                 accessibilityCheck(required: preferences.requiresAccessibility),
                 bluetoothCheck(),
-                codexCheck(
-                    required: preferences.requiresCodex,
-                    compatibilityRequired: preferences.requiresCodexCompatibility
-                ),
+                preferences.requiresCodexCLI
+                    ? codexCLICheck(terminal: preferences.codexCLITerminal)
+                    : codexCheck(
+                        required: preferences.requiresCodex,
+                        compatibilityRequired: preferences.requiresCodexCompatibility
+                    ),
                 sourceCheck(),
+                Self.voiceLinkCheck(snapshot: RuntimeStatusFile.snapshot(forRuntimePID: runtimePID)),
             ],
             runtimeActive: isRuntimeActive
+        )
+    }
+
+    /// 运行中的米遥会把语音链路状态写进文件；这里把“遥控器不回应 ATVV 握手”明确显示出来。
+    static func voiceLinkCheck(snapshot: MiAoRuntimeStatusSnapshot?) -> SetupCheck {
+        guard let snapshot else {
+            return SetupCheck(
+                id: .voiceLink,
+                title: "语音链路",
+                detail: "米遥未运行；启动后这里显示遥控器 ATVV 握手与语音状态",
+                state: .ready,
+                action: nil,
+                actionTitle: nil,
+                requirement: .optional
+            )
+        }
+        if snapshot.suggestsRepairing {
+            return SetupCheck(
+                id: .voiceLink,
+                title: "语音链路",
+                detail:
+                    "遥控器连续 \(snapshot.negotiationTimeouts) 次未响应 ATVV 能力协商（\(snapshot.label)）。按键仍可用，但语音不会工作：先重试；仍失败请关开系统蓝牙，或长按 菜单+HOME 重新配对遥控器。",
+                state: .actionRequired,
+                action: .retryVoiceConnection,
+                actionTitle: "重试语音连接",
+                requirement: .optional
+            )
+        }
+        if let issue = snapshot.issue {
+            return SetupCheck(
+                id: .voiceLink,
+                title: "语音链路",
+                detail: snapshot.label.contains(issue) ? snapshot.label : "\(snapshot.label) · \(issue)",
+                state: .actionRequired,
+                action: .retryVoiceConnection,
+                actionTitle: "重试语音连接",
+                requirement: .optional
+            )
+        }
+        return SetupCheck(
+            id: .voiceLink,
+            title: "语音链路",
+            detail: snapshot.label,
+            state: .ready,
+            action: nil,
+            actionTitle: nil,
+            requirement: .optional
         )
     }
 
@@ -417,6 +472,63 @@ struct SetupEnvironmentInspector {
         }
     }
 
+    func codexCLIStatus(terminal: CodexCLITerminalChoice) -> CodexCLIStatus {
+        CodexCLIStatusInspector().inspect(choice: terminal)
+    }
+
+    static func codexCLICheck(
+        status: CodexCLIStatus,
+        terminal: CodexCLITerminalChoice
+    ) -> SetupCheck {
+        guard status.isInstalled else {
+            return SetupCheck(
+                id: .codex,
+                title: "Codex CLI",
+                detail: "未找到 codex 命令；请先安装：brew install codex 或 npm i -g @openai/codex",
+                state: .blocked,
+                action: .installCodexCLI,
+                actionTitle: "安装说明",
+                requirement: .featureRequired
+            )
+        }
+        guard status.login.isLoggedIn else {
+            return SetupCheck(
+                id: .codex,
+                title: "Codex CLI",
+                detail: "\(status.versionDescription) 已安装，\(status.login.description)；登录后才能发送",
+                state: .actionRequired,
+                action: .loginCodexCLI,
+                actionTitle: "登录 Codex CLI",
+                requirement: .featureRequired
+            )
+        }
+        if let running = status.running.first {
+            return SetupCheck(
+                id: .codex,
+                title: "Codex CLI",
+                detail: "\(status.versionDescription) · \(status.login.description) · 运行中：\(running.description)",
+                state: .ready,
+                action: nil,
+                actionTitle: nil,
+                requirement: .featureRequired
+            )
+        }
+        return SetupCheck(
+            id: .codex,
+            title: "Codex CLI",
+            detail:
+                "\(status.versionDescription) · \(status.login.description)；尚未运行，可在 \(terminal.displayName) 启动 codex 后由米遥自动找到",
+            state: .ready,
+            action: .launchCodexCLI,
+            actionTitle: "启动 Codex CLI",
+            requirement: .featureRequired
+        )
+    }
+
+    private func codexCLICheck(terminal: CodexCLITerminalChoice) -> SetupCheck {
+        Self.codexCLICheck(status: codexCLIStatus(terminal: terminal), terminal: terminal)
+    }
+
     private func codexCheck(required: Bool, compatibilityRequired: Bool) -> SetupCheck {
         guard required else {
             return SetupCheck(
@@ -517,15 +629,25 @@ struct SetupEnvironmentInspector {
         return candidates.first { fileManager.isExecutableFile(atPath: $0) }
     }
 
-    private var isRuntimeActive: Bool {
+    /// 当前运行中的米遥写下的语音链路快照；未运行或快照来自旧进程时为 nil。
+    var runtimeStatus: MiAoRuntimeStatusSnapshot? {
+        RuntimeStatusFile.snapshot(forRuntimePID: runtimePID)
+    }
+
+    private var runtimePID: Int32? {
         let lockURL = MiAoInstallationContext.fileURL.deletingLastPathComponent()
             .appendingPathComponent("runtime.lock/pid")
         guard
             let value = try? String(contentsOf: lockURL, encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             let pid = Int32(value),
-            pid > 0
-        else { return false }
-        return kill(pid, 0) == 0
+            pid > 0,
+            kill(pid, 0) == 0
+        else { return nil }
+        return pid
+    }
+
+    private var isRuntimeActive: Bool {
+        runtimePID != nil
     }
 }

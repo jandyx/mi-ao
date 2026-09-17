@@ -54,4 +54,18 @@ MI_AO_TEST_GATE_EXIT=7 "$ROOT/scripts/run.sh" --force-submit --no-buttons
 [[ ! -s "$GATE_LOG" ]]
 [[ "$(cat "$APP_LOG")" == "run --force-submit --no-buttons" ]]
 
+: > "$APP_LOG"
+MI_AO_TEST_GATE_EXIT=7 "$ROOT/scripts/run.sh" --submit-target codex-cli --no-buttons
+[[ ! -s "$GATE_LOG" ]]
+[[ "$(cat "$APP_LOG")" == "run --submit-target codex-cli --no-buttons" ]]
+
+: > "$APP_LOG"
+set +e
+MI_AO_TEST_GATE_EXIT=7 "$ROOT/scripts/run.sh" --submit-target codex-app --no-buttons
+exit_code=$?
+set -e
+[[ "$exit_code" == "7" ]]
+[[ "$(cat "$GATE_LOG")" == "ensure" ]]
+[[ ! -s "$APP_LOG" ]]
+
 echo "Codex launch gate shell tests: OK"

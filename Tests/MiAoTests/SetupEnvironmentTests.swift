@@ -72,6 +72,52 @@ import Testing
     #expect(configuration.mode == .setup)
 }
 
+@Test func codexCLIModeRequiresAccessibilityButNotCodexApp() {
+    let inspector = SetupEnvironmentInspector()
+    var cli = AppPreferences.defaults
+    cli.submissionMode = .codexCLI
+    cli.buttonControlEnabled = true
+    let report = inspector.inspect(configuration: Configuration(), preferences: cli)
+    #expect(report.check(.accessibility)?.requirement == .featureRequired)
+    #expect(report.check(.codex)?.requirement == .featureRequired)
+    #expect(report.check(.codex)?.title == "Codex CLI")
+    #expect(report.check(.voiceLink)?.requirement == .optional)
+}
+
+@Test func parsesCodexCLISubmitOptions() throws {
+    let defaults = try Configuration.parse(["mi-ao", "run"])
+    #expect(defaults.submitTarget == .codexApp)
+    #expect(defaults.cliTerminal == .auto)
+    #expect(defaults.tmuxTarget == nil)
+
+    let configuration = try Configuration.parse([
+        "mi-ao", "run",
+        "--submit-target", "codex-cli",
+        "--cli-terminal", "app:com.googlecode.iterm2",
+        "--cli-launch-command", "cxd --full-auto",
+        "--tmux-target", "%3",
+    ])
+    #expect(configuration.submitTarget == .codexCLI)
+    #expect(configuration.cliTerminal == .app("com.googlecode.iterm2"))
+    #expect(configuration.cliLaunchCommand == "cxd --full-auto")
+    #expect(defaults.cliLaunchCommand == "codex")
+    #expect(configuration.tmuxTarget == "%3")
+    #expect(configuration.submitToCodex)
+
+    let tmux = try Configuration.parse(["mi-ao", "run", "--cli-terminal", "tmux"])
+    #expect(tmux.cliTerminal == .tmux)
+
+    #expect(throws: BridgeError.self) {
+        try Configuration.parse(["mi-ao", "run", "--submit-target", "terminal"])
+    }
+    #expect(throws: BridgeError.self) {
+        try Configuration.parse(["mi-ao", "run", "--cli-terminal", "iterm"])
+    }
+    #expect(throws: BridgeError.self) {
+        try Configuration.parse(["mi-ao", "run", "--tmux-target"])
+    }
+}
+
 @Test func installationContextStillReadsPreFingerprintFormat() throws {
     let plist = """
         <?xml version="1.0" encoding="UTF-8"?>
